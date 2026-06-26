@@ -15,7 +15,8 @@ It completely bypasses the limitations of standard `jq` by offering native JSONC
 
 ## 📦 Prerequisites
 
-* **Rust / Cargo** * **xclip** (Linux/X11 clipboard management)
+* **Rust / Cargo**
+* **xclip** (Linux/X11 clipboard management)
 
 ## 🚀 Installation
 
@@ -95,4 +96,14 @@ jqm-oc --generate-completions powershell > "$PROFILE\..\jqm-oc-completion.ps1"
 ```nushell
 jqm-oc --generate-completions nushell | save ~/.config/nushell/jqm-oc-completions.nu
 # Add `source ~/.config/nushell/jqm-oc-completions.nu` to your config.nu
+```
+
+**Xonsh:**
+Xonsh relies on Fish completions via the `fish_completer` extension. 
+1. Install the extension: `pip install xontrib-fish-completer`
+2. Add to your `~/.xonshrc`: `xontrib load fish_completer`
+3. Generate the Fish completion file:
+```bash
+mkdir -p ~/.config/fish/completions
+jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish
 ```
