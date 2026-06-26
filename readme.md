@@ -1,11 +1,13 @@
 # jqm-oc (JSON Query Merge - OpenCode)
 
-`jqm-oc` is a lightning-fast, compiled Rust CLI utility designed to safely and dynamically merge JSON/JSONC clipboard data into your local OpenCode configuration files. 
+`jqm-oc` is a lightning-fast, cross-platform compiled Rust CLI utility designed to safely and dynamically merge JSON/JSONC clipboard data into your local OpenCode configuration files. 
 
 It completely bypasses the limitations of standard `jq` by offering native JSONC (comments) parsing, dynamic type coercion via the official OpenCode schema, visual terminal diffs, interactive merging, and dynamic shell completions.
 
 ## ✨ Features
 
+* **Cross-Platform Clipboard Integration:** Native support for Windows, macOS, and Linux out of the box. No external dependencies required.
+* **Failsafe Root Protection:** Strictly prevents accidental full-file overwrites if you mistakenly copy arrays or raw strings.
 * **Interactive Cherry-Picking (`-i`):** Interactively select exactly which key->value pairs from your clipboard are merged into your config file.
 * **Dynamic Custom Mapping:** Define custom key translations on the fly via CLI flags, and save them persistently to your system.
 * **Dynamic Shell Completions:** Auto-generate native completion scripts for Bash, Zsh, Fish, PowerShell, Elvish, and Nushell directly from the CLI.
@@ -15,8 +17,7 @@ It completely bypasses the limitations of standard `jq` by offering native JSONC
 
 ## 📦 Prerequisites
 
-* **Rust / Cargo**
-* **xclip** (Linux/X11 clipboard management)
+* **Rust / Cargo** (Used to compile the binary. Once compiled, the binary requires zero dependencies).
 
 ## 🚀 Installation
 
@@ -24,8 +25,13 @@ It completely bypasses the limitations of standard `jq` by offering native JSONC
 git clone [https://github.com/mcjs-ai/jqm-oc.git](https://github.com/mcjs-ai/jqm-oc.git)
 cd jqm-oc
 cargo build --release
+
+# On Linux / macOS
 mkdir -p ~/.local/bin
 mv target/release/jqm-oc ~/.local/bin/
+
+# On Windows
+# Move target\release\jqm-oc.exe to a folder in your System PATH
 ```
 
 ## 💻 CLI Usage
@@ -42,7 +48,7 @@ jqm-oc -i
 
 ### 🗺️ Custom Alias Mapping
 
-`jqm-oc` includes hardcoded aliases for common MCJS workflows (e.g., `mcpServers` ➔ `mcp`). You can dynamically add to or override these defaults.
+`jqm-oc` includes hardcoded aliases for common Model Context Protocol workflows (e.g., `mcpServers` ➔ `mcp`). You can dynamically add to or override these defaults.
 
 * **Use a map for a single run:**
   ```bash

@@ -1,3 +1,4 @@
+use arboard::Clipboard;
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::{generate, Shell};
 use clap_complete_nushell::Nushell;
@@ -8,17 +9,11 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{exit, Command};
+use std::process::{exit};
 
-// Define the supported shells for auto-completion
 #[derive(ValueEnum, Clone)]
 enum CompletionShell {
-    Bash,
-    Zsh,
-    Fish,
-    Powershell,
-    Elvish,
-    Nushell,
+    Bash, Zsh, Fish, Powershell, Elvish, Nushell,
 }
 
 #[derive(Parser)]
@@ -36,19 +31,19 @@ struct Cli {
     map: Option<String>,
 
     /// Save the provided --map to the config file for future use
-    #[arg(long)]
+    #[arg(long, requires = "map")]
     save_map: bool,
 
     /// Set and save a custom map, overwriting the existing config (format: oldKey=newKey)
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["map", "reset_map", "no_custom_map"])]
     set_map: Option<String>,
 
     /// Ignore any saved custom map in the config file
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["map", "set_map", "reset_map"])]
     no_custom_map: bool,
 
     /// Clear/reset the saved custom map in the config file
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["map", "set_map", "no_custom_map"])]
     reset_map: bool,
 
     /// Generate shell completion scripts
@@ -56,7 +51,6 @@ struct Cli {
     generate_completions: Option<CompletionShell>,
 }
 
-// Map configuration path: ~/.config/jqm-oc/aliases.json
 fn get_map_config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
@@ -77,9 +71,7 @@ fn load_saved_map() -> HashMap<String, String> {
 
 fn save_map_to_disk(map: &HashMap<String, String>) {
     let path = get_map_config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).unwrap_or_default();
-    }
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).unwrap_or_default(); }
     let json = serde_json::to_string_pretty(map).unwrap();
     fs::write(&path, json).unwrap_or_else(|_| eprintln!("Warning: Failed to save map config."));
     println!("Saved custom alias map to {:?}", path);
@@ -88,9 +80,9 @@ fn save_map_to_disk(map: &HashMap<String, String>) {
 fn parse_map_string(s: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pair in s.split(',') {
-        let parts: Vec<&str> = pair.split('=').collect();
-        if parts.len() == 2 {
-            map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
+        // FIXED: Handles values that contain equals signs correctly
+        if let Some((old, new)) = pair.split_once('=') {
+            map.insert(old.trim().to_string(), new.trim().to_string());
         }
     }
     map
@@ -99,11 +91,7 @@ fn parse_map_string(s: &str) -> HashMap<String, String> {
 fn strip_jsonc(input: &str) -> String {
     let re = Regex::new(r#"(?s)("(?:\\.|[^"\\])*")|(//[^\n]*|/\*.*?\*/)"#).unwrap();
     re.replace_all(input, |caps: &regex::Captures| {
-        if let Some(string_match) = caps.get(1) {
-            string_match.as_str().to_string()
-        } else {
-            String::new()
-        }
+        if let Some(string_match) = caps.get(1) { string_match.as_str().to_string() } else { String::new() }
     }).to_string()
 }
 
@@ -111,13 +99,9 @@ fn deep_merge(target: &mut Value, source: &Value) {
     if target.is_object() && source.is_object() {
         let target_obj = target.as_object_mut().unwrap();
         let source_obj = source.as_object().unwrap();
-
         for (k, v) in source_obj {
-            if target_obj.contains_key(k) {
-                deep_merge(target_obj.get_mut(k).unwrap(), v);
-            } else {
-                target_obj.insert(k.clone(), v.clone());
-            }
+            if target_obj.contains_key(k) { deep_merge(target_obj.get_mut(k).unwrap(), v); } 
+            else { target_obj.insert(k.clone(), v.clone()); }
         }
     } else {
         *target = source.clone();
@@ -125,17 +109,11 @@ fn deep_merge(target: &mut Value, source: &Value) {
 }
 
 fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>, alias_map: &HashMap<String, String>) {
-    let obj = match clip.as_object_mut() {
-        Some(o) => o,
-        None => return,
-    };
-
+    let obj = match clip.as_object_mut() { Some(o) => o, None => return, };
     let mut new_obj = Map::new();
-
     for (k, v) in obj.iter_mut() {
         let final_key = alias_map.get(k).unwrap_or(k);
         let mut new_v = v.clone();
-
         if let Some(prop_schema) = schema_props.get(final_key) {
             if let Some(schema_type) = prop_schema.get("type").and_then(|t| t.as_str()) {
                 if new_v.is_string() {
@@ -160,7 +138,6 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>, alias_map
     *clip = Value::Object(new_obj);
 }
 
-// Flatten JSON to dot-notation leaf nodes for interactive selection
 fn flatten_to_leaves(val: &Value, prefix: &str, acc: &mut Vec<(String, Value)>) {
     match val {
         Value::Object(map) => {
@@ -169,11 +146,10 @@ fn flatten_to_leaves(val: &Value, prefix: &str, acc: &mut Vec<(String, Value)>) 
                 flatten_to_leaves(v, &new_prefix, acc);
             }
         }
-        _ => acc.push((prefix.to_string(), val.clone())), // Arrays treated as leaves
+        _ => acc.push((prefix.to_string(), val.clone())),
     }
 }
 
-// Rebuild JSON from dot-notation paths
 fn unflatten_leaves(leaves: Vec<(String, Value)>) -> Value {
     let mut root = Map::new();
     for (path, val) in leaves {
@@ -224,11 +200,9 @@ fn print_changes(path: &str, old: &Value, new: &Value, changes_found: &mut bool)
 fn main() {
     let cli = Cli::parse();
 
-    // --- INTERCEPT FOR COMPLETION GENERATION ---
     if let Some(shell) = cli.generate_completions {
         let mut cmd = Cli::command();
         let bin_name = cmd.get_name().to_string();
-        
         match shell {
             CompletionShell::Bash => generate(Shell::Bash, &mut cmd, &bin_name, &mut std::io::stdout()),
             CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, &bin_name, &mut std::io::stdout()),
@@ -240,17 +214,12 @@ fn main() {
         exit(0);
     }
 
-    // Handle map resetting
     if cli.reset_map {
         let path = get_map_config_path();
-        if path.exists() {
-            fs::remove_file(&path).unwrap_or_default();
-            println!("Custom alias map reset.");
-        }
+        if path.exists() { fs::remove_file(&path).unwrap_or_default(); println!("Custom alias map reset."); }
         exit(0);
     }
 
-    // Build the dynamic alias map
     let mut alias_map: HashMap<String, String> = HashMap::from([
         ("mcpServers".to_string(), "mcp".to_string()),
         ("lspServers".to_string(), "lsp".to_string()),
@@ -258,10 +227,7 @@ fn main() {
     ]);
 
     let mut custom_map = HashMap::new();
-
-    if !cli.no_custom_map {
-        custom_map.extend(load_saved_map());
-    }
+    if !cli.no_custom_map { custom_map.extend(load_saved_map()); }
 
     if let Some(ref map_str) = cli.set_map {
         custom_map = parse_map_string(map_str);
@@ -269,26 +235,35 @@ fn main() {
     } else if let Some(ref map_str) = cli.map {
         let parsed = parse_map_string(map_str);
         custom_map.extend(parsed);
-        if cli.save_map {
-            save_map_to_disk(&custom_map);
-        }
+        if cli.save_map { save_map_to_disk(&custom_map); }
     }
-
     alias_map.extend(custom_map);
 
     let target_file = cli.target_file.unwrap_or_else(|| {
         let home = env::var("HOME").expect("HOME environment variable not set");
         format!("{}/.config/opencode/opencode.jsonc", home)
     });
-
     let target_path = PathBuf::from(&target_file);
 
-    let clip_output = Command::new("xclip").args(["-selection", "clipboard", "-o"]).output()
-        .unwrap_or_else(|_| { eprintln!("Error: Failed to execute xclip."); exit(1); });
+    // FIXED: Cross-platform clipboard via arboard
+    let mut clipboard = Clipboard::new().unwrap_or_else(|e| {
+        eprintln!("Error: Failed to initialize OS clipboard.\nDetails: {}", e);
+        exit(1);
+    });
 
-    let clip_raw = String::from_utf8_lossy(&clip_output.stdout).to_string();
+    let clip_raw = clipboard.get_text().unwrap_or_else(|_| String::new());
     if clip_raw.trim().is_empty() {
-        eprintln!("Error: Clipboard is empty.");
+        eprintln!("Error: Clipboard is empty or contains non-text data.");
+        exit(1);
+    }
+
+    let mut clip_parsed: Value = serde_json::from_str(&strip_jsonc(&clip_raw))
+        .unwrap_or_else(|e| { eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1); });
+
+    // CRITICAL FIX: The Root Overwrite Protection
+    if !clip_parsed.is_object() {
+        eprintln!("Error: Clipboard data MUST be a valid JSON Object at its root.");
+        eprintln!("Aborting: Merging an array or primitive would overwrite and erase your entire configuration file.");
         exit(1);
     }
 
@@ -298,9 +273,6 @@ fn main() {
     } else {
         Value::Object(Map::new())
     };
-
-    let mut clip_parsed: Value = serde_json::from_str(&strip_jsonc(&clip_raw))
-        .unwrap_or_else(|e| { eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1); });
 
     let schema_url = "https://opencode.ai/config.json";
     let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(3)).build().unwrap();
@@ -313,20 +285,12 @@ fn main() {
         }
     }
 
-    // --- INTERACTIVE MODE ---
     if cli.interactive {
         let mut leaves = Vec::new();
         flatten_to_leaves(&clip_parsed, "", &mut leaves);
+        if leaves.is_empty() { eprintln!("Clipboard object is empty or invalid."); exit(0); }
 
-        if leaves.is_empty() {
-            eprintln!("Clipboard object is empty or invalid.");
-            exit(0);
-        }
-
-        let display_strings: Vec<String> = leaves.iter()
-            .map(|(path, val)| format!("{} = {}", path, val))
-            .collect();
-        
+        let display_strings: Vec<String> = leaves.iter().map(|(path, val)| format!("{} = {}", path, val)).collect();
         let defaults: Vec<bool> = vec![true; leaves.len()];
 
         println!("\n\x1b[36mInteractive Mode: Select the key->value pairs to merge into OpenCode.\x1b[0m");
@@ -337,15 +301,9 @@ fn main() {
             .interact()
             .unwrap();
 
-        if selection_indices.is_empty() {
-            println!("No keys selected. Aborting merge.");
-            exit(0);
-        }
+        if selection_indices.is_empty() { println!("No keys selected. Aborting merge."); exit(0); }
 
-        let selected_leaves: Vec<(String, Value)> = selection_indices.into_iter()
-            .map(|i| leaves[i].clone())
-            .collect();
-
+        let selected_leaves: Vec<(String, Value)> = selection_indices.into_iter().map(|i| leaves[i].clone()).collect();
         clip_parsed = unflatten_leaves(selected_leaves);
     }
 
@@ -356,15 +314,10 @@ fn main() {
     let mut changes_found = false;
     print_changes("", &old_target, &target_data, &mut changes_found);
 
-    if !changes_found {
-        println!("  (No changes detected.)\n");
-        exit(0);
-    }
+    if !changes_found { println!("  (No changes detected.)\n"); exit(0); }
     println!();
 
-    if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent).unwrap_or_default();
-    }
+    if let Some(parent) = target_path.parent() { fs::create_dir_all(parent).unwrap_or_default(); }
     fs::write(&target_path, serde_json::to_string_pretty(&target_data).unwrap())
         .unwrap_or_else(|_| { eprintln!("Error: Failed to write to target."); exit(1); });
 
