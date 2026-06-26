@@ -1,3 +1,4 @@
+use anyhow::{bail, Context, Result};
 use arboard::Clipboard;
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::{generate, Shell};
@@ -8,8 +9,8 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
-use std::process::exit;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 #[derive(ValueEnum, Clone)]
 enum CompletionShell {
@@ -38,7 +39,7 @@ struct Cli {
     #[arg(long, requires = "map")]
     save_map: bool,
 
-    /// Set and save a custom map, overwriting the existing config (format: oldKey=newKey)
+    /// Set and save a custom map, overwriting the existing config
     #[arg(long, conflicts_with_all = ["map", "reset_map", "no_custom_map"])]
     set_map: Option<String>,
 
@@ -55,30 +56,41 @@ struct Cli {
     generate_completions: Option<CompletionShell>,
 }
 
-fn get_map_config_path() -> PathBuf {
+// --- Configuration & Paths ---
+
+fn get_config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
-        .join("jqm-oc/aliases.json")
+        .join("jqm-oc")
 }
+
+fn get_map_config_path() -> PathBuf {
+    get_config_dir().join("aliases.json")
+}
+
+fn get_schema_cache_path() -> PathBuf {
+    get_config_dir().join("schema_cache.json")
+}
+
+// --- Map Management ---
 
 fn load_saved_map() -> HashMap<String, String> {
     let path = get_map_config_path();
-    if path.exists() {
-        if let Ok(data) = fs::read_to_string(path) {
-            if let Ok(map) = serde_json::from_str(&data) {
-                return map;
-            }
+    if let Ok(data) = fs::read_to_string(path) {
+        if let Ok(map) = serde_json::from_str(&data) {
+            return map;
         }
     }
     HashMap::new()
 }
 
-fn save_map_to_disk(map: &HashMap<String, String>) {
+fn save_map_to_disk(map: &HashMap<String, String>) -> Result<()> {
     let path = get_map_config_path();
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).unwrap_or_default(); }
-    let json = serde_json::to_string_pretty(map).unwrap();
-    fs::write(&path, json).unwrap_or_else(|_| eprintln!("Warning: Failed to save map config."));
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+    let json = serde_json::to_string_pretty(map)?;
+    fs::write(&path, json).context("Failed to save map config to disk")?;
     println!("Saved custom alias map to {:?}", path);
+    Ok(())
 }
 
 fn parse_map_string(s: &str) -> HashMap<String, String> {
@@ -90,6 +102,8 @@ fn parse_map_string(s: &str) -> HashMap<String, String> {
     }
     map
 }
+
+// --- JSON Helpers ---
 
 fn strip_jsonc(input: &str) -> String {
     let re = Regex::new(r#"(?s)("(?:\\.|[^"\\])*")|(//[^\n]*|/\*.*?\*/)"#).unwrap();
@@ -111,12 +125,48 @@ fn deep_merge(target: &mut Value, source: &Value) {
     }
 }
 
+// --- Schema & Coercion ---
+
+fn fetch_or_load_schema() -> Option<Value> {
+    let cache_path = get_schema_cache_path();
+    let cache_duration = Duration::from_secs(60 * 60 * 24); // 24 hours
+
+    // Try reading valid cache first
+    if cache_path.exists() {
+        if let Ok(metadata) = fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                if SystemTime::now().duration_since(modified).unwrap_or_default() < cache_duration {
+                    if let Ok(data) = fs::read_to_string(&cache_path) {
+                        if let Ok(json) = serde_json::from_str(&data) { return Some(json); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fetch from web if cache is missing or stale
+    let schema_url = "https://opencode.ai/config.json";
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
+    
+    if let Ok(response) = client.get(schema_url).send() {
+        if let Ok(schema) = response.json::<Value>() {
+            // Save cache invisibly
+            if let Some(parent) = cache_path.parent() { let _ = fs::create_dir_all(parent); }
+            let _ = fs::write(&cache_path, serde_json::to_string(&schema).unwrap_or_default());
+            return Some(schema);
+        }
+    }
+    None
+}
+
 fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>, alias_map: &HashMap<String, String>) {
     let obj = match clip.as_object_mut() { Some(o) => o, None => return, };
     let mut new_obj = Map::new();
+    
     for (k, v) in obj.iter_mut() {
         let final_key = alias_map.get(k).unwrap_or(k);
         let mut new_v = v.clone();
+        
         if let Some(prop_schema) = schema_props.get(final_key) {
             if let Some(schema_type) = prop_schema.get("type").and_then(|t| t.as_str()) {
                 if new_v.is_string() {
@@ -140,6 +190,8 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>, alias_map
     }
     *clip = Value::Object(new_obj);
 }
+
+// --- Interactive Selection ---
 
 fn flatten_to_leaves(val: &Value, prefix: &str, acc: &mut Vec<(String, Value)>) {
     match val {
@@ -172,6 +224,30 @@ fn unflatten_leaves(leaves: Vec<(String, Value)>) -> Value {
     Value::Object(root)
 }
 
+fn apply_interactive_mode(clip_parsed: &mut Value) -> Result<()> {
+    let mut leaves = Vec::new();
+    flatten_to_leaves(clip_parsed, "", &mut leaves);
+    if leaves.is_empty() { bail!("Clipboard object is empty or invalid for interactive selection."); }
+
+    let display_strings: Vec<String> = leaves.iter().map(|(path, val)| format!("{} = {}", path, val)).collect();
+    let defaults: Vec<bool> = vec![true; leaves.len()];
+
+    println!("\n\x1b[36mInteractive Mode: Select the key->value pairs to merge into OpenCode.\x1b[0m");
+    let selection_indices = MultiSelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Use Space to toggle, Enter to confirm")
+        .items(&display_strings)
+        .defaults(&defaults)
+        .interact()?;
+
+    if selection_indices.is_empty() { bail!("No keys selected. Aborting merge."); }
+
+    let selected_leaves: Vec<(String, Value)> = selection_indices.into_iter().map(|i| leaves[i].clone()).collect();
+    *clip_parsed = unflatten_leaves(selected_leaves);
+    Ok(())
+}
+
+// --- Printing Diffs ---
+
 fn print_changes(path: &str, old: &Value, new: &Value, changes_found: &mut bool) {
     match (old, new) {
         (Value::Object(o1), Value::Object(o2)) => {
@@ -200,29 +276,35 @@ fn print_changes(path: &str, old: &Value, new: &Value, changes_found: &mut bool)
     }
 }
 
-fn main() {
+// --- Core Flow ---
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // 1. Generate Completions
     if let Some(shell) = cli.generate_completions {
         let mut cmd = Cli::command();
         let bin_name = cmd.get_name().to_string();
+        let mut stdout = std::io::stdout();
         match shell {
-            CompletionShell::Bash => generate(Shell::Bash, &mut cmd, &bin_name, &mut std::io::stdout()),
-            CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, &bin_name, &mut std::io::stdout()),
-            CompletionShell::Fish => generate(Shell::Fish, &mut cmd, &bin_name, &mut std::io::stdout()),
-            CompletionShell::Powershell => generate(Shell::PowerShell, &mut cmd, &bin_name, &mut std::io::stdout()),
-            CompletionShell::Elvish => generate(Shell::Elvish, &mut cmd, &bin_name, &mut std::io::stdout()),
-            CompletionShell::Nushell => generate(Nushell, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Bash => generate(Shell::Bash, &mut cmd, &bin_name, &mut stdout),
+            CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, &bin_name, &mut stdout),
+            CompletionShell::Fish => generate(Shell::Fish, &mut cmd, &bin_name, &mut stdout),
+            CompletionShell::Powershell => generate(Shell::PowerShell, &mut cmd, &bin_name, &mut stdout),
+            CompletionShell::Elvish => generate(Shell::Elvish, &mut cmd, &bin_name, &mut stdout),
+            CompletionShell::Nushell => generate(Nushell, &mut cmd, &bin_name, &mut stdout),
         }
-        exit(0);
+        return Ok(());
     }
 
+    // 2. Handle Config Resets
     if cli.reset_map {
         let path = get_map_config_path();
-        if path.exists() { fs::remove_file(&path).unwrap_or_default(); println!("Custom alias map reset."); }
-        exit(0);
+        if path.exists() { fs::remove_file(&path)?; println!("Custom alias map reset."); }
+        return Ok(());
     }
 
+    // 3. Build Mapping Dictionary
     let mut alias_map: HashMap<String, String> = HashMap::from([
         ("mcpServers".to_string(), "mcp".to_string()),
         ("lspServers".to_string(), "lsp".to_string()),
@@ -234,130 +316,105 @@ fn main() {
 
     if let Some(ref map_str) = cli.set_map {
         custom_map = parse_map_string(map_str);
-        save_map_to_disk(&custom_map);
+        save_map_to_disk(&custom_map)?;
     } else if let Some(ref map_str) = cli.map {
-        let parsed = parse_map_string(map_str);
-        custom_map.extend(parsed);
-        if cli.save_map { save_map_to_disk(&custom_map); }
+        custom_map.extend(parse_map_string(map_str));
+        if cli.save_map { save_map_to_disk(&custom_map)?; }
     }
     alias_map.extend(custom_map);
 
+    // 4. Resolve Target File
     let target_file = cli.target_file.unwrap_or_else(|| {
-        let home = env::var("HOME").expect("HOME environment variable not set");
-        format!("{}/.config/opencode/opencode.jsonc", home)
+        format!("{}/.config/opencode/opencode.jsonc", env::var("HOME").unwrap_or_default())
     });
     let target_path = PathBuf::from(&target_file);
 
-    let mut clipboard = Clipboard::new().unwrap_or_else(|e| {
-        eprintln!("Error: Failed to initialize OS clipboard.\nDetails: {}", e);
-        exit(1);
-    });
-
-    let clip_raw = clipboard.get_text().unwrap_or_else(|_| String::new());
-    if clip_raw.trim().is_empty() {
-        eprintln!("Error: Clipboard is empty or contains non-text data.");
-        exit(1);
-    }
+    // 5. Read Clipboard safely
+    let mut clipboard = Clipboard::new().context("Failed to initialize OS clipboard")?;
+    let clip_raw = clipboard.get_text().context("Clipboard is empty or contains non-text data")?;
+    if clip_raw.trim().is_empty() { bail!("Clipboard is empty."); }
 
     let clean_clip = strip_jsonc(&clip_raw);
     
-    // Auto-Fix JSON Heuristic
+    // 6. Parse and Auto-Heal JSON
     let mut clip_parsed: Value = match serde_json::from_str(&clean_clip) {
         Ok(v) => v,
         Err(e) => {
-            if cli.no_autofix {
-                eprintln!("Error: Invalid JSON/JSONC.\n{}", e);
-                exit(1);
-            } else {
-                let trimmed = clean_clip.trim();
-                let mut fixed_clip = String::new();
-                let mut changed = false;
+            if cli.no_autofix { bail!("Invalid JSON/JSONC.\n{}", e); }
+            
+            let trimmed = clean_clip.trim();
+            let mut fixed_clip = String::new();
+            let mut changed = false;
 
-                if !trimmed.starts_with('{') { fixed_clip.push('{'); changed = true; }
-                fixed_clip.push_str(trimmed);
-                if !trimmed.ends_with('}') { fixed_clip.push('}'); changed = true; }
+            if !trimmed.starts_with('{') { fixed_clip.push('{'); changed = true; }
+            fixed_clip.push_str(trimmed);
+            if !trimmed.ends_with('}') { fixed_clip.push('}'); changed = true; }
 
-                if changed {
-                    if let Ok(fixed_val) = serde_json::from_str::<Value>(&fixed_clip) {
-                        println!("\x1b[33mWarning: Malformed JSON detected (missing root braces).\x1b[0m");
-                        println!("Proposed fix:\n{}", fixed_clip);
-                        
-                        let apply = Confirm::with_theme(&ColorfulTheme::default())
-                            .with_prompt("Do you wish to correct it and continue?")
-                            .default(true)
-                            .interact()
-                            .unwrap_or(false);
+            if changed {
+                if let Ok(fixed_val) = serde_json::from_str::<Value>(&fixed_clip) {
+                    println!("\x1b[33mWarning: Malformed JSON detected (missing root braces).\x1b[0m");
+                    println!("Proposed fix:\n{}", fixed_clip);
+                    
+                    let apply = Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Do you wish to correct it and continue?")
+                        .default(true)
+                        .interact()?;
 
-                        if apply { fixed_val } else { eprintln!("Aborted by user."); exit(1); }
-                    } else {
-                        eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1);
-                    }
-                } else {
-                    eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1);
-                }
-            }
+                    if apply { fixed_val } else { bail!("Aborted by user."); }
+                } else { bail!("Invalid JSON/JSONC. Auto-fix failed.\n{}", e); }
+            } else { bail!("Invalid JSON/JSONC.\n{}", e); }
         }
     };
 
+    // 7. Verify Root Object Integrity
     if !clip_parsed.is_object() {
-        eprintln!("Error: Clipboard data MUST be a valid JSON Object at its root.");
-        eprintln!("Aborting: Merging an array or primitive would overwrite and erase your entire configuration file.");
-        exit(1);
+        bail!("Clipboard data MUST be a valid JSON Object at its root.\nAborting to prevent full-file overwrite.");
     }
 
+    // 8. Parse Target File
     let mut target_data: Value = if target_path.exists() {
         let raw_target = fs::read_to_string(&target_path).unwrap_or_default();
         serde_json::from_str(&strip_jsonc(&raw_target)).unwrap_or_else(|_| Value::Object(Map::new()))
-    } else {
-        Value::Object(Map::new())
-    };
+    } else { Value::Object(Map::new()) };
 
-    let schema_url = "https://opencode.ai/config.json";
-    let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(3)).build().unwrap();
-
-    if let Ok(response) = client.get(schema_url).send() {
-        if let Ok(schema) = response.json::<Value>() {
-            if let Some(schema_props) = schema.get("properties").and_then(|p| p.as_object()) {
-                coerce_and_map(&mut clip_parsed, schema_props, &alias_map);
-            }
+    // 9. Fetch Schema and Map/Coerce
+    if let Some(schema) = fetch_or_load_schema() {
+        if let Some(schema_props) = schema.get("properties").and_then(|p| p.as_object()) {
+            coerce_and_map(&mut clip_parsed, schema_props, &alias_map);
         }
     }
 
+    // 10. Optional Interactive Cherry-Picking
     if cli.interactive {
-        let mut leaves = Vec::new();
-        flatten_to_leaves(&clip_parsed, "", &mut leaves);
-        if leaves.is_empty() { eprintln!("Clipboard object is empty or invalid."); exit(0); }
-
-        let display_strings: Vec<String> = leaves.iter().map(|(path, val)| format!("{} = {}", path, val)).collect();
-        let defaults: Vec<bool> = vec![true; leaves.len()];
-
-        println!("\n\x1b[36mInteractive Mode: Select the key->value pairs to merge into OpenCode.\x1b[0m");
-        let selection_indices = MultiSelect::with_theme(&ColorfulTheme::default())
-            .with_prompt("Use Space to toggle, Enter to confirm")
-            .items(&display_strings)
-            .defaults(&defaults)
-            .interact()
-            .unwrap();
-
-        if selection_indices.is_empty() { println!("No keys selected. Aborting merge."); exit(0); }
-
-        let selected_leaves: Vec<(String, Value)> = selection_indices.into_iter().map(|i| leaves[i].clone()).collect();
-        clip_parsed = unflatten_leaves(selected_leaves);
+        apply_interactive_mode(&mut clip_parsed)?;
     }
 
+    // 11. Perform the Deep Merge
     let old_target = target_data.clone();
     deep_merge(&mut target_data, &clip_parsed);
 
+    // 12. Display Diff and Write
     println!("\nChanges applied to {}:", target_file);
     let mut changes_found = false;
     print_changes("", &old_target, &target_data, &mut changes_found);
 
-    if !changes_found { println!("  (No changes detected.)\n"); exit(0); }
-    println!();
+    if !changes_found {
+        println!("  (No changes detected.)\n");
+        return Ok(());
+    }
 
-    if let Some(parent) = target_path.parent() { fs::create_dir_all(parent).unwrap_or_default(); }
-    fs::write(&target_path, serde_json::to_string_pretty(&target_data).unwrap())
-        .unwrap_or_else(|_| { eprintln!("Error: Failed to write to target."); exit(1); });
+    if let Some(parent) = target_path.parent() { fs::create_dir_all(parent)?; }
+    fs::write(&target_path, serde_json::to_string_pretty(&target_data)?)
+        .context("Failed to write to target file")?;
 
-    println!("Success: Configuration written to disk.");
+    println!("\nSuccess: Configuration written to disk.");
+    Ok(())
+}
+
+// Minimal main wrapper to cleanly print anyhow errors
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("\x1b[31mError:\x1b[0m {:#}", e);
+        std::process::exit(1);
+    }
 }
