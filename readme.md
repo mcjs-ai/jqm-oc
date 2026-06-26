@@ -2,10 +2,11 @@
 
 `jqm-oc` is a lightning-fast, cross-platform compiled Rust CLI utility designed to safely and dynamically merge JSON/JSONC clipboard data into your local OpenCode configuration files. 
 
-It completely bypasses the limitations of standard `jq` by offering native JSONC (comments) parsing, dynamic type coercion via the official OpenCode schema, visual terminal diffs, interactive merging, and dynamic shell completions.
+It completely bypasses the limitations of standard `jq` by offering native JSONC (comments) parsing, auto-healing for malformed clips, dynamic type coercion via the official OpenCode schema, visual terminal diffs, interactive merging, and dynamic shell completions.
 
 ## ✨ Features
 
+* **JSON Auto-Fix Healing:** Automatically detects and heals incomplete JSON copies (e.g., missing a starting `{` or trailing `}`) and prompts you for confirmation before proceeding.
 * **Cross-Platform Clipboard Integration:** Native support for Windows, macOS, and Linux out of the box. No external dependencies required.
 * **Failsafe Root Protection:** Strictly prevents accidental full-file overwrites if you mistakenly copy arrays or raw strings.
 * **Interactive Cherry-Picking (`-i`):** Interactively select exactly which key->value pairs from your clipboard are merged into your config file.
@@ -36,9 +37,14 @@ mv target/release/jqm-oc ~/.local/bin/
 
 ## 💻 CLI Usage
 
-**Basic Merge (Reads clipboard, merges into default OpenCode config):**
+**Basic Merge (Reads clipboard, heals if needed, merges into default OpenCode config):**
 ```bash
 jqm-oc
+```
+
+**Disable Auto-Fix Heuristics:** Fails fast if the clipboard contains malformed JSON instead of attempting to heal it.
+```bash
+jqm-oc --no-autofix
 ```
 
 **Interactive Mode:** Opens a terminal UI to check/uncheck nested key->value pairs before merging.

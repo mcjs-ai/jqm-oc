@@ -2,14 +2,14 @@ use arboard::Clipboard;
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::{generate, Shell};
 use clap_complete_nushell::Nushell;
-use dialoguer::{theme::ColorfulTheme, MultiSelect};
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{exit};
+use std::process::exit;
 
 #[derive(ValueEnum, Clone)]
 enum CompletionShell {
@@ -25,6 +25,10 @@ struct Cli {
     /// Interactively select keys or key->value pairs to add
     #[arg(short, long)]
     interactive: bool,
+
+    /// Suppress the auto-fix prompt for missing JSON braces
+    #[arg(long)]
+    no_autofix: bool,
 
     /// Provide a custom map (format: oldKey=newKey,o2=n2)
     #[arg(long)]
@@ -80,7 +84,6 @@ fn save_map_to_disk(map: &HashMap<String, String>) {
 fn parse_map_string(s: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pair in s.split(',') {
-        // FIXED: Handles values that contain equals signs correctly
         if let Some((old, new)) = pair.split_once('=') {
             map.insert(old.trim().to_string(), new.trim().to_string());
         }
@@ -245,7 +248,6 @@ fn main() {
     });
     let target_path = PathBuf::from(&target_file);
 
-    // FIXED: Cross-platform clipboard via arboard
     let mut clipboard = Clipboard::new().unwrap_or_else(|e| {
         eprintln!("Error: Failed to initialize OS clipboard.\nDetails: {}", e);
         exit(1);
@@ -257,10 +259,46 @@ fn main() {
         exit(1);
     }
 
-    let mut clip_parsed: Value = serde_json::from_str(&strip_jsonc(&clip_raw))
-        .unwrap_or_else(|e| { eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1); });
+    let clean_clip = strip_jsonc(&clip_raw);
+    
+    // Auto-Fix JSON Heuristic
+    let mut clip_parsed: Value = match serde_json::from_str(&clean_clip) {
+        Ok(v) => v,
+        Err(e) => {
+            if cli.no_autofix {
+                eprintln!("Error: Invalid JSON/JSONC.\n{}", e);
+                exit(1);
+            } else {
+                let trimmed = clean_clip.trim();
+                let mut fixed_clip = String::new();
+                let mut changed = false;
 
-    // CRITICAL FIX: The Root Overwrite Protection
+                if !trimmed.starts_with('{') { fixed_clip.push('{'); changed = true; }
+                fixed_clip.push_str(trimmed);
+                if !trimmed.ends_with('}') { fixed_clip.push('}'); changed = true; }
+
+                if changed {
+                    if let Ok(fixed_val) = serde_json::from_str::<Value>(&fixed_clip) {
+                        println!("\x1b[33mWarning: Malformed JSON detected (missing root braces).\x1b[0m");
+                        println!("Proposed fix:\n{}", fixed_clip);
+                        
+                        let apply = Confirm::with_theme(&ColorfulTheme::default())
+                            .with_prompt("Do you wish to correct it and continue?")
+                            .default(true)
+                            .interact()
+                            .unwrap_or(false);
+
+                        if apply { fixed_val } else { eprintln!("Aborted by user."); exit(1); }
+                    } else {
+                        eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1);
+                    }
+                } else {
+                    eprintln!("Error: Invalid JSON/JSONC.\n{}", e); exit(1);
+                }
+            }
+        }
+    };
+
     if !clip_parsed.is_object() {
         eprintln!("Error: Clipboard data MUST be a valid JSON Object at its root.");
         eprintln!("Aborting: Merging an array or primitive would overwrite and erase your entire configuration file.");
