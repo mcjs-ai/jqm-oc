@@ -3,19 +3,23 @@ use arboard::Clipboard;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use dialoguer::{theme::ColorfulTheme, Confirm};
+use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+// Import the CLI module
 mod cli;
-
-
 use cli::{Cli, CompletionShell};
+
+// Idiomatically import the library crate
 use jqm_oc::*;
 
 fn get_map_config_path() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")).join("jqm-oc/aliases.json")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+        .join("jqm-oc/aliases.json")
 }
 
 fn load_saved_map() -> HashMap<String, String> {
@@ -117,20 +121,77 @@ fn main() -> Result<()> {
     let clip_raw = clipboard.get_text().context("Clipboard is empty")?;
     
     let clean_clip = strip_jsonc(&clip_raw);
+    
+    // --- ADVANCED AUTO-FIX HEURISTIC ---
     let mut clip_parsed: Value = match serde_json::from_str(&clean_clip) {
         Ok(v) => v,
         Err(e) => {
             if cli.no_autofix { bail!("Invalid JSON: {}", e); }
+            
             let trimmed = clean_clip.trim();
-            let mut fixed = String::new();
-            if !trimmed.starts_with('{') { fixed.push('{'); }
-            fixed.push_str(trimmed);
-            if !trimmed.ends_with('}') { fixed.push('}'); }
-            if let Ok(val) = serde_json::from_str::<Value>(&fixed) {
-                if Confirm::with_theme(&ColorfulTheme::default()).with_prompt("Invalid JSON detected. Heal it?").default(true).interact()? {
+            
+            // 1. Strip trailing commas
+            let no_comma = if trimmed.ends_with(',') { 
+                trimmed[..trimmed.len()-1].trim_end() 
+            } else { 
+                trimmed 
+            };
+
+            let mut attempts = Vec::new();
+
+            // Permutation A: Standard brace wrap `{ ... }`
+            let mut a1 = String::new();
+            if !no_comma.starts_with('{') { a1.push('{'); }
+            a1.push_str(no_comma);
+            if !no_comma.ends_with('}') { a1.push('}'); }
+            attempts.push(a1);
+
+            // Permutation B: Missing leading quote `{" ... }` 
+            let mut a2 = String::new();
+            if !no_comma.starts_with('{') && !no_comma.starts_with('"') {
+                a2.push_str("{\"");
+            } else if !no_comma.starts_with('{') {
+                a2.push('{');
+            }
+            a2.push_str(no_comma);
+            if !no_comma.ends_with('}') { a2.push('}'); }
+            attempts.push(a2);
+
+            // Permutation C: Completely unquoted key `{"key": ... }`
+            let re = Regex::new(r#"^([a-zA-Z0-9_-]+)\s*:"#).unwrap();
+            if re.is_match(no_comma) {
+                let a3_base = re.replace(no_comma, "\"$1\":").to_string();
+                let mut a3 = String::new();
+                if !a3_base.starts_with('{') { a3.push('{'); }
+                a3.push_str(&a3_base);
+                if !a3_base.ends_with('}') { a3.push('}'); }
+                attempts.push(a3);
+            }
+
+            let mut healed_val = None;
+            let mut proposed_fix = String::new();
+
+            for attempt in attempts {
+                if let Ok(val) = serde_json::from_str::<Value>(&attempt) {
+                    if val.is_object() {
+                        healed_val = Some(val);
+                        proposed_fix = attempt;
+                        break;
+                    }
+                }
+            }
+
+            if let Some(val) = healed_val {
+                println!("\x1b[33mWarning: Malformed JSON detected.\x1b[0m");
+                println!("Proposed fix:\n{}", proposed_fix);
+                if Confirm::with_theme(&ColorfulTheme::default()).with_prompt("Do you wish to correct it and continue?").default(true).interact()? {
                     val
-                } else { bail!("Invalid JSON: {}", e); }
-            } else { bail!("Invalid JSON: {}", e); }
+                } else { 
+                    bail!("Aborted by user."); 
+                }
+            } else { 
+                bail!("Invalid JSON: {}. Auto-fix permutations failed.", e); 
+            }
         }
     };
 
