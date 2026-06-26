@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 #[derive(ValueEnum, Clone)]
