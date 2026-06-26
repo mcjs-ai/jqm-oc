@@ -1,4 +1,6 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser, ValueEnum};
+use clap_complete::{generate, Shell};
+use clap_complete_nushell::Nushell;
 use dialoguer::{theme::ColorfulTheme, MultiSelect};
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -7,6 +9,17 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{exit, Command};
+
+// Define the supported shells for auto-completion
+#[derive(ValueEnum, Clone)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
+    Elvish,
+    Nushell,
+}
 
 #[derive(Parser)]
 #[command(author, version, about = "JSON Query Merge for OpenCode", long_about = None)]
@@ -37,6 +50,10 @@ struct Cli {
     /// Clear/reset the saved custom map in the config file
     #[arg(long)]
     reset_map: bool,
+
+    /// Generate shell completion scripts
+    #[arg(long, value_enum, hide = true)]
+    generate_completions: Option<CompletionShell>,
 }
 
 // Map configuration path: ~/.config/jqm-oc/aliases.json
@@ -206,6 +223,22 @@ fn print_changes(path: &str, old: &Value, new: &Value, changes_found: &mut bool)
 
 fn main() {
     let cli = Cli::parse();
+
+    // --- INTERCEPT FOR COMPLETION GENERATION ---
+    if let Some(shell) = cli.generate_completions {
+        let mut cmd = Cli::command();
+        let bin_name = cmd.get_name().to_string();
+        
+        match shell {
+            CompletionShell::Bash => generate(Shell::Bash, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Zsh => generate(Shell::Zsh, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Fish => generate(Shell::Fish, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Powershell => generate(Shell::PowerShell, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Elvish => generate(Shell::Elvish, &mut cmd, &bin_name, &mut std::io::stdout()),
+            CompletionShell::Nushell => generate(Nushell, &mut cmd, &bin_name, &mut std::io::stdout()),
+        }
+        exit(0);
+    }
 
     // Handle map resetting
     if cli.reset_map {
