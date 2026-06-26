@@ -2,83 +2,90 @@
 
 `jqm-oc` is a lightning-fast, cross-platform compiled Rust CLI utility designed to safely and dynamically merge JSON/JSONC clipboard data into your local OpenCode configuration files. 
 
-It completely bypasses the limitations of standard `jq` by offering native JSONC (comments) parsing, auto-healing for malformed clips, dynamic type coercion via the official OpenCode schema, visual terminal diffs, interactive merging, and dynamic shell completions.
-
-## ✨ Features
-
-* **JSON Auto-Fix Healing:** Automatically detects and heals incomplete JSON copies (e.g., missing a starting `{` or trailing `}`) and prompts for confirmation.
-* **Cross-Platform Clipboard Integration:** Native support for Windows, macOS, and Linux out of the box using the `arboard` backend.
-* **Failsafe Root Protection:** Strictly prevents accidental full-file overwrites if you mistakenly copy arrays or raw strings.
-* **Interactive Cherry-Picking (`-i`):** Interactively select exactly which key->value pairs from your clipboard are merged into your config file.
-* **Dynamic Custom Mapping:** Define custom key translations on the fly via CLI flags, and save them persistently to your system.
-* **Dynamic Shell Completions:** Auto-generate native completion scripts for Bash, Zsh, Fish, PowerShell, Elvish, and Nushell.
-* **Native JSONC Support:** Safely parses clipboard data and target config files, stripping comments.
-* **Visual Terminal Diffs:** Prints a color-coded log of exactly which keys were added (`+`) or modified (`~`).
-
-## 📦 Prerequisites
-
-* **Rust / Cargo** (The tool is self-contained after compilation; no other runtime dependencies are required).
+## ✨ New in 1.0.0
+* **Safety First:** Auto-backups (`.bak`) created before every write.
+* **Dry Run:** Use `--dry-run` to simulate merges without disk changes.
+* **Alias Registration:** Dynamically alias the tool in your shell: `eval $(jqm-oc --register-alias <name>)`.
+* **Custom Schema:** Use `--schema-path` to point to any local file or remote URL.
 
 ## 🚀 Installation
-
-### 1. Build from Source
 ```bash
+# Build the project
 git clone [https://github.com/mcjs-ai/jqm-oc.git](https://github.com/mcjs-ai/jqm-oc.git)
 cd jqm-oc
 cargo build --release
-```
 
-### 2. OS-Specific Setup
-
-**Linux:**
-```bash
+# Move to your bin directory
 mkdir -p ~/.local/bin
 mv target/release/jqm-oc ~/.local/bin/
-# Ensure ~/.local/bin is in your $PATH
 ```
-
-**macOS:**
-```bash
-# Move to a system path (requires sudo or permissions)
-sudo mv target/release/jqm-oc /usr/local/bin/
-```
-
-**Windows 11:**
-1. Create a folder in your user directory, e.g., `C:\Users\<YourUsername>\bin`.
-2. Move `target\release\jqm-oc.exe` into that folder.
-3. Open **Environment Variables** (search in Start menu).
-4. Select `Path` -> `Edit` -> `New` -> Add `C:\Users\<YourUsername>\bin`.
-5. Restart your terminal (PowerShell or CMD) to apply.
 
 ## 💻 CLI Usage
 
-**Basic Merge:**
+**Safety & Integrity:**
+* **Basic Merge:** `jqm-oc`
+* **Dry Run (Simulation):** `jqm-oc --dry-run`
+* **No Auto-Fix (Strict Mode):** `jqm-oc --no-autofix`
+
+**Advanced Configuration:**
+* **Custom Config Path:** `jqm-oc --config-path ./my-config.jsonc`
+* **Custom Schema:** `jqm-oc --schema-path ./custom-schema.json`
+* **Map/Remap Keys:** `jqm-oc --map "oldKey=newKey" --save-map`
+
+---
+
+### ⌨️ Dynamic Alias Registration (Multi-Tool Workflows)
+You can create custom "baked-in" versions of `jqm-oc` using the registration flag. This captures all current flags and parameters, saving them into a reusable alias in your shell. 
+
+This allows you to transform `jqm-oc` into a Swiss Army knife for your entire agentic mesh. Here are practical examples of how to map `jqm-oc` for local development and popular AI coding environments:
+
+#### 1. Project-Specific Configs (The Local Pipeline)
+Create a permanent alias for a specific, isolated project configuration. This is perfect for safely testing new Model Context Protocol blocks without touching your global files.
 ```bash
-jqm-oc
+eval $(jqm-oc -i \
+  --config-path ./.opencode/my-local-config.jsonc \
+  --register-alias jqm-local)
 ```
+* **Usage:** Type `jqm-local` to open the interactive UI and merge the clipboard exclusively into your local `./my-local-config.jsonc` file.
 
-**Interactive Mode:**
+#### 2. Claude Code (The Anthropic Pipeline)
+Map standard MCP keys to Claude's custom format and target its specific config file.
 ```bash
-jqm-oc -i
+eval $(jqm-oc -i \
+  --config-path ~/.config/claude/config.json \
+  --map "mcpServers=mcp,customAgents=claudeAgents" \
+  --register-alias jqm-claude)
 ```
+* **Usage:** Type `jqm-claude` to open the interactive UI, apply Claude mappings, and merge into the Claude config.
 
-**Disable Auto-Fix Heuristics:**
+#### 3. Cursor / Crush (The VS Code Fork Pipeline)
+Target the `settings.json` file directly and point to their official schema for remote validation.
 ```bash
-jqm-oc --no-autofix
+eval $(jqm-oc \
+  --config-path ~/.config/Cursor/User/settings.json \
+  --schema-path "[https://cursor.com/api/schema.json](https://cursor.com/api/schema.json)" \
+  --map "mcpServers=cursor.mcp.servers" \
+  --register-alias jqm-crush)
 ```
+* **Usage:** Type `jqm-crush` to instantly merge your clipboard into your Cursor settings, coercing types based on their specific remote schema.
 
-### 🗺️ Custom Alias Mapping
+#### 4. Aider (The Terminal Agent Pipeline)
+Manage a strict JSON payload file for Aider MCP definitions. Skips the interactive menu and refuses to auto-heal broken syntax.
+```bash
+eval $(jqm-oc \
+  --config-path ~/mcjs-ai/aider-mcp-configs.json \
+  --no-autofix \
+  --register-alias jqm-aider)
+```
+* **Usage:** Type `jqm-aider` to instantly and strictly update your local Aider MCP payload.
 
-`jqm-oc` includes hardcoded aliases for common MCJS workflows (e.g., `mcpServers` ➔ `mcp`).
+*(Note: To make these aliases permanent across all terminal sessions, append the command output to your shell's rc file, e.g., `jqm-oc ... --register-alias jqm-claude >> ~/.bashrc`)*
 
-* **Use a map for a single run:** `jqm-oc --map "customTools=tools,legacyNode=node"`
-* **Save a map for all future runs:** `jqm-oc --map "customTools=tools" --save-map`
-* **Set/Overwrite the saved map:** `jqm-oc --set-map "myMcp=mcp,myLsp=lsp"`
-* **Permanently delete the saved map:** `jqm-oc --reset-map`
 
-### ⌨️ Shell Completions
+---
 
-`jqm-oc` generates its own autocomplete scripts on the fly.
+## ⌨️ Shell Completions
+You can generate completion scripts for Bash, Zsh, Fish, PowerShell, Elvish, and Nushell:
 
 **Bash:**
 ```bash
@@ -110,6 +117,11 @@ jqm-oc --generate-completions nushell | save ~/.config/nushell/jqm-oc-completion
 ```
 
 **Xonsh:**
-1. `pip install xontrib-fish-completer`
-2. Add `xontrib load fish_completer` to `~/.xonshrc`
-3. Run: `jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish`
+Xonsh relies on Fish completions via the `fish_completer` extension. 
+1. Install the extension: `pip install xontrib-fish-completer`
+2. Add to your `~/.xonshrc`: `xontrib load fish_completer`
+3. Generate the Fish completion file:
+```bash
+mkdir -p ~/.config/fish/completions
+jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish
+```

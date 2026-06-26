@@ -4,26 +4,24 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-# HTTP Client
+# httpclient
 reqwest = { version = "0.13.4", features = ["blocking", "json"] }
-
-# Serialization
+# serialization
 serde_json = "1.0.150"
-
-# Regex and Pattern Matching
+# regex
 regex = "1.12.4"
 
-# CLI Parsing and Completions
+# cli arg completer
 clap = { version = "4.6.1", features = ["derive"] }
 clap_complete = "4.6.5"
 clap_complete_nushell = "4.6.0"
 
-# Terminal UI and Path resolution
+# TUI + path resolution
 dialoguer = "0.12.0"
 dirs = "6.0.0"
 
-# Cross-platform Clipboard
+# cross-platform clipboard
 arboard = "3.6.1"
 
-# Error Handling
+# error handling
 anyhow = "1.0.103"
