@@ -6,80 +6,79 @@ It completely bypasses the limitations of standard `jq` by offering native JSONC
 
 ## ✨ Features
 
-* **JSON Auto-Fix Healing:** Automatically detects and heals incomplete JSON copies (e.g., missing a starting `{` or trailing `}`) and prompts you for confirmation before proceeding.
-* **Cross-Platform Clipboard Integration:** Native support for Windows, macOS, and Linux out of the box. No external dependencies required.
+* **JSON Auto-Fix Healing:** Automatically detects and heals incomplete JSON copies (e.g., missing a starting `{` or trailing `}`) and prompts for confirmation.
+* **Cross-Platform Clipboard Integration:** Native support for Windows, macOS, and Linux out of the box using the `arboard` backend.
 * **Failsafe Root Protection:** Strictly prevents accidental full-file overwrites if you mistakenly copy arrays or raw strings.
 * **Interactive Cherry-Picking (`-i`):** Interactively select exactly which key->value pairs from your clipboard are merged into your config file.
 * **Dynamic Custom Mapping:** Define custom key translations on the fly via CLI flags, and save them persistently to your system.
-* **Dynamic Shell Completions:** Auto-generate native completion scripts for Bash, Zsh, Fish, PowerShell, Elvish, and Nushell directly from the CLI.
-* **Native JSONC Support:** Safely parses clipboard data and target config files, stripping trailing (`//`) and block (`/* */`) comments.
-* **Visual Terminal Diffs:** Automatically prints a color-coded log of exactly which keys were added (`+`) or modified (`~`).
-* **Dynamic Schema Coercion:** Fetches the `draft-07` schema from `https://opencode.ai/config.json` and dynamically converts stringified numbers/booleans into their proper schema types.
+* **Dynamic Shell Completions:** Auto-generate native completion scripts for Bash, Zsh, Fish, PowerShell, Elvish, and Nushell.
+* **Native JSONC Support:** Safely parses clipboard data and target config files, stripping comments.
+* **Visual Terminal Diffs:** Prints a color-coded log of exactly which keys were added (`+`) or modified (`~`).
 
 ## 📦 Prerequisites
 
-* **Rust / Cargo** (Used to compile the binary. Once compiled, the binary requires zero dependencies).
+* **Rust / Cargo** (The tool is self-contained after compilation; no other runtime dependencies are required).
 
 ## 🚀 Installation
 
+### 1. Build from Source
 ```bash
 git clone [https://github.com/mcjs-ai/jqm-oc.git](https://github.com/mcjs-ai/jqm-oc.git)
 cd jqm-oc
 cargo build --release
+```
 
-# On Linux / macOS
+### 2. OS-Specific Setup
+
+**Linux:**
+```bash
 mkdir -p ~/.local/bin
 mv target/release/jqm-oc ~/.local/bin/
-
-# On Windows
-# Move target\release\jqm-oc.exe to a folder in your System PATH
+# Ensure ~/.local/bin is in your $PATH
 ```
+
+**macOS:**
+```bash
+# Move to a system path (requires sudo or permissions)
+sudo mv target/release/jqm-oc /usr/local/bin/
+```
+
+**Windows 11:**
+1. Create a folder in your user directory, e.g., `C:\Users\<YourUsername>\bin`.
+2. Move `target\release\jqm-oc.exe` into that folder.
+3. Open **Environment Variables** (search in Start menu).
+4. Select `Path` -> `Edit` -> `New` -> Add `C:\Users\<YourUsername>\bin`.
+5. Restart your terminal (PowerShell or CMD) to apply.
 
 ## 💻 CLI Usage
 
-**Basic Merge (Reads clipboard, heals if needed, merges into default OpenCode config):**
+**Basic Merge:**
 ```bash
 jqm-oc
 ```
 
-**Disable Auto-Fix Heuristics:** Fails fast if the clipboard contains malformed JSON instead of attempting to heal it.
-```bash
-jqm-oc --no-autofix
-```
-
-**Interactive Mode:** Opens a terminal UI to check/uncheck nested key->value pairs before merging.
+**Interactive Mode:**
 ```bash
 jqm-oc -i
 ```
 
+**Disable Auto-Fix Heuristics:**
+```bash
+jqm-oc --no-autofix
+```
+
 ### 🗺️ Custom Alias Mapping
 
-`jqm-oc` includes hardcoded aliases for common Model Context Protocol workflows (e.g., `mcpServers` ➔ `mcp`). You can dynamically add to or override these defaults.
+`jqm-oc` includes hardcoded aliases for common MCJS workflows (e.g., `mcpServers` ➔ `mcp`).
 
-* **Use a map for a single run:**
-  ```bash
-  jqm-oc --map "customTools=tools,legacyNode=node"
-  ```
-* **Save a map for all future runs:**
-  ```bash
-  jqm-oc --map "customTools=tools" --save-map
-  ```
-* **Set/Overwrite the entire saved config:**
-  ```bash
-  jqm-oc --set-map "myMcp=mcp,myLsp=lsp"
-  ```
-* **Temporarily ignore the saved map:**
-  ```bash
-  jqm-oc --no-custom-map
-  ```
-* **Permanently delete the saved map:**
-  ```bash
-  jqm-oc --reset-map
-  ```
+* **Use a map for a single run:** `jqm-oc --map "customTools=tools,legacyNode=node"`
+* **Save a map for all future runs:** `jqm-oc --map "customTools=tools" --save-map`
+* **Set/Overwrite the saved map:** `jqm-oc --set-map "myMcp=mcp,myLsp=lsp"`
+* **Permanently delete the saved map:** `jqm-oc --reset-map`
 
 ### ⌨️ Shell Completions
 
-`jqm-oc` can generate its own autocomplete scripts on the fly. Pipe or redirect the output to your shell's completion directory.
+`jqm-oc` generates its own autocomplete scripts on the fly.
 
 **Bash:**
 ```bash
@@ -111,11 +110,6 @@ jqm-oc --generate-completions nushell | save ~/.config/nushell/jqm-oc-completion
 ```
 
 **Xonsh:**
-Xonsh relies on Fish completions via the `fish_completer` extension. 
-1. Install the extension: `pip install xontrib-fish-completer`
-2. Add to your `~/.xonshrc`: `xontrib load fish_completer`
-3. Generate the Fish completion file:
-```bash
-mkdir -p ~/.config/fish/completions
-jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish
-```
+1. `pip install xontrib-fish-completer`
+2. Add `xontrib load fish_completer` to `~/.xonshrc`
+3. Run: `jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish`
