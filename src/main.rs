@@ -7,13 +7,12 @@ use std::process::{Command, exit};
 
 // Safely strip JSONC comments while preserving valid strings
 fn strip_jsonc(input: &str) -> String {
-    // Matches literal strings first, or matches comments to strip
     let re = Regex::new(r#"(?s)("(?:\\.|[^"\\])*")|(//[^\n]*|/\*.*?\*/)"#).unwrap();
     re.replace_all(input, |caps: &regex::Captures| {
         if let Some(string_match) = caps.get(1) {
             string_match.as_str().to_string()
         } else {
-            String::new() // It was a comment, strip it
+            String::new()
         }
     })
     .to_string()
@@ -47,7 +46,6 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>) {
     let mut new_obj = Map::new();
 
     for (k, v) in obj.iter_mut() {
-        // Map custom keys exactly as required
         let final_key = match k.as_str() {
             "mcpServers" => "mcp",
             "lspServers" => "lsp",
@@ -57,7 +55,6 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>) {
 
         let mut new_v = v.clone();
 
-        // Check against the OpenCode schema properties
         if let Some(prop_schema) = schema_props.get(final_key) {
             if let Some(schema_type) = prop_schema.get("type").and_then(|t| t.as_str()) {
                 if new_v.is_string() {
@@ -76,7 +73,6 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>) {
                         }
                     }
                 } else if new_v.is_object() && schema_type == "object" {
-                    // Recursively process nested structures
                     if let Some(nested_props) = prop_schema.get("properties").and_then(|p| p.as_object()) {
                         coerce_and_map(&mut new_v, nested_props);
                     }
@@ -89,8 +85,41 @@ fn coerce_and_map(clip: &mut Value, schema_props: &Map<String, Value>) {
     *clip = Value::Object(new_obj);
 }
 
+// Recursively print the differences between the old target and the new target
+fn print_changes(path: &str, old: &Value, new: &Value, changes_found: &mut bool) {
+    match (old, new) {
+        (Value::Object(o1), Value::Object(o2)) => {
+            for (k, v2) in o2 {
+                let new_path = if path.is_empty() { k.clone() } else { format!("{}.{}", path, k) };
+                if let Some(v1) = o1.get(k) {
+                    if v1 != v2 {
+                        print_changes(&new_path, v1, v2, changes_found);
+                    }
+                } else {
+                    *changes_found = true;
+                    // Green '+' for new keys
+                    println!("  \x1b[32m+\x1b[0m {} = {}", new_path, v2);
+                }
+            }
+        },
+        (Value::Array(a1), Value::Array(a2)) => {
+            if a1 != a2 {
+                *changes_found = true;
+                // Yellow '~' for modified arrays
+                println!("  \x1b[33m~\x1b[0m {} (Array updated: {} -> {} items)", path, a1.len(), a2.len());
+            }
+        },
+        (v1, v2) => {
+            if v1 != v2 {
+                *changes_found = true;
+                // Yellow '~' for modified primitives
+                println!("  \x1b[33m~\x1b[0m {} : {} -> {}", path, v1, v2);
+            }
+        }
+    }
+}
+
 fn main() {
-    // 1. Resolve target file
     let target_file = env::args().nth(1).unwrap_or_else(|| {
         let home = env::var("HOME").expect("HOME environment variable not set");
         format!("{}/.config/opencode/opencode.jsonc", home)
@@ -98,7 +127,6 @@ fn main() {
 
     let target_path = PathBuf::from(&target_file);
 
-    // 2. Fetch clipboard safely using xclip
     let clip_output = Command::new("xclip")
         .args(["-selection", "clipboard", "-o"])
         .output()
@@ -118,7 +146,6 @@ fn main() {
         exit(1);
     }
 
-    // 3. Parse Target File
     let mut target_data: Value = if target_path.exists() {
         let raw_target = fs::read_to_string(&target_path).unwrap_or_default();
         let clean_target = strip_jsonc(&raw_target);
@@ -127,14 +154,12 @@ fn main() {
         Value::Object(Map::new())
     };
 
-    // 4. Parse Clipboard Data
     let clean_clip = strip_jsonc(&clip_raw);
     let mut clip_parsed: Value = serde_json::from_str(&clean_clip).unwrap_or_else(|e| {
         eprintln!("Error: Clipboard data is not valid JSON or JSONC.\n{}", e);
         exit(1);
     });
 
-    // 5. Fetch Schema & Coerce
     let schema_url = "https://opencode.ai/config.json";
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -151,17 +176,30 @@ fn main() {
         eprintln!("Warning: Could not fetch schema. Skipping coercion.");
     }
 
-    // 6. Deep Merge Data
+    // Capture state before merge
+    let old_target = target_data.clone();
+
+    // Perform Merge
     deep_merge(&mut target_data, &clip_parsed);
 
-    // 7. Write Atomically Back to Target
+    // Print the Diff
+    println!("\nChanges applied to {}:", target_file);
+    let mut changes_found = false;
+    print_changes("", &old_target, &target_data, &mut changes_found);
+
+    if !changes_found {
+        println!("  (No changes detected. The configurations were already identical.)");
+    }
+    println!(); // Blank line for clean terminal output
+
+    // Write to file
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).unwrap_or_default();
     }
 
     let out_json = serde_json::to_string_pretty(&target_data).unwrap();
     if fs::write(&target_path, out_json).is_ok() {
-        println!("Success: Deep merged, mapped, and coerced clipboard into '{}'.", target_file);
+        println!("Success: Configuration written to disk.");
     } else {
         eprintln!("Error: Failed to write to target file.");
         exit(1);

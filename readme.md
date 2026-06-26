@@ -7,6 +7,7 @@ It completely bypasses the limitations of standard `jq` by offering native JSONC
 ## ✨ Features
 
 * **Native JSONC Support:** Safely parses both your clipboard data and your target config files, stripping trailing (`//`) and block (`/* */`) comments without breaking the parser.
+* **Visual Terminal Diffs:** Automatically compares the old configuration to the new one, printing a color-coded log of exactly which keys were added (`+`) or modified (`~`) during the merge.
 * **Dynamic Schema Coercion:** Automatically fetches the `draft-07` schema directly from `https://opencode.ai/config.json`. If you copy stringified values (e.g., `"true"` or `"5"`), it dynamically converts them into their proper schema types (`boolean`, `number`) before saving.
 * **Intelligent Key Translation:** Automatically intercepts and maps alternative keys to their official OpenCode schema equivalents:
     * `mcpServers` ➔ `mcp` (Specifically mapped to handle Model Context Protocol configurations seamlessly)
@@ -71,7 +72,15 @@ jqm-oc /path/to/another/config.jsonc
 
 2. Run `jqm-oc`.
 
-3. The tool fetches the schema, maps `mcpServers` to `mcp`, coerces `"true"` to `true`, deep-merges it into your existing OpenCode file, and saves the result perfectly formatted.
+3. The tool fetches the schema, maps `mcpServers` to `mcp`, coerces `"true"` to `true`, deep-merges it into your existing OpenCode file, and outputs the exact changes to your terminal:
+
+```text
+Changes applied to /home/joshs/.config/opencode/opencode.jsonc:
+  + mcp.my-server.command = "node"
+  ~ mcp.my-server.alwaysAllow : "false" -> true
+
+Success: Configuration written to disk.
+```
 
 ## 🛠️ Modifying Key Maps
 
