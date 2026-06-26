@@ -4,9 +4,9 @@
 
 ## ✨ New in 1.0.0
 * **Safety First:** Auto-backups (`.bak`) created before every write.
-* **Dry Run:** Use `--dry-run` to simulate merges without disk changes.
+* **Dry Run:** Use `--dry-run` or `-d` to simulate merges without disk changes.
 * **Alias Registration:** Dynamically alias the tool in your shell: `eval $(jqm-oc --register-alias <name>)`.
-* **Custom Schema:** Use `--schema-path` to point to any local file or remote URL.
+* **Custom Schema:** Use `--schema-path` or `-s` to point to any local file or remote URL.
 
 ## 🚀 Installation
 ```bash
@@ -24,13 +24,15 @@ mv target/release/jqm-oc ~/.local/bin/
 
 **Safety & Integrity:**
 * **Basic Merge:** `jqm-oc`
-* **Dry Run (Simulation):** `jqm-oc --dry-run`
+* **Dry Run (Simulation):** `jqm-oc --dry-run` or `jqm-oc -d`
 * **No Auto-Fix (Strict Mode):** `jqm-oc --no-autofix`
 
 **Advanced Configuration:**
-* **Custom Config Path:** `jqm-oc --config-path ./my-config.jsonc`
-* **Custom Schema:** `jqm-oc --schema-path ./custom-schema.json`
-* **Map/Remap Keys:** `jqm-oc --map "oldKey=newKey" --save-map`
+* **Custom Config Path:** `jqm-oc --config-path ./my-config.jsonc` or `jqm-oc -c ./my-config.jsonc`
+* **Custom Schema:** `jqm-oc --schema-path ./custom-schema.json` or `jqm-oc -s ./custom-schema.json`
+* **Map/Remap Keys:** `jqm-oc --map "oldKey=newKey" --save-map` or `jqm-oc --m "oldKey=newKey" --save-map`
+* **Multi-tool Config Merge by registering an alias for a map, schema amd config:** `jqm-oc -s ./tool-schema.json -c ./tool-config.jsonc -m 'keyToCoerce=toolKeyEquivalent,k2=t2,...,kn=tn' --register-alias jqm-tool`
+
 
 ---
 
@@ -106,8 +108,8 @@ jqm-oc --generate-completions fish > ~/.config/fish/completions/jqm-oc.fish
 
 **PowerShell:**
 ```powershell
-jqm-oc --generate-completions powershell > "$PROFILE\..\jqm-oc-completion.ps1"
-# Add . "$PROFILE\..\jqm-oc-completion.ps1" to your profile
+echo '$(jqm-oc --generate-completions powershell | Out-String | Invoke-Expression >> $proflile 
+# Registers an ArgCompleter for jqm-oc in your profile
 ```
 
 **Nushell:**

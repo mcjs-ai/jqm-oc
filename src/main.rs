@@ -9,10 +9,10 @@ use std::fs;
 use std::path::PathBuf;
 
 mod cli;
-mod lib;
+
 
 use cli::{Cli, CompletionShell};
-use lib::*;
+use jqm_oc::*;
 
 fn get_map_config_path() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")).join("jqm-oc/aliases.json")
